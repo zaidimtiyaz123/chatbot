@@ -1,0 +1,6 @@
+{
+  "name": "Web Search Assistant",
+  "description": "A search assistant that verifies real-time information with web search before answering.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
