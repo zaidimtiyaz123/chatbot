@@ -35,11 +35,11 @@ export function SuggestedPrompts({ onSelectPrompt }: SuggestedPromptsProps) {
       </div>
 
       <h2 className="text-xl sm:text-2xl font-semibold tracking-tight text-zinc-900">
-        How can I help you search today?
+        Web First Search
       </h2>
 
       <p className="mt-2 text-sm text-zinc-600 max-w-md leading-relaxed">
-        I am <strong>Web Search Assistant</strong>, your search assistant. I check reliable, up-to-date sources before answering factual questions.
+        Real-time answers grounded directly in live web sources. Ask about current events, breaking news, market prices, weather, technical facts, or any topic.
       </p>
 
       <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full text-left">

@@ -4,21 +4,23 @@ import { searchLiveWeb, type LiveSearchResult } from "./search.ts";
 
 dotenv.config();
 
-const SYSTEM_INSTRUCTION = `You are a helpful search assistant.
+const SYSTEM_INSTRUCTION = `You are a real-time web search engine.
 
-ROLE & STYLE:
-- Give a clear, direct, and simple answer in plain language, just like a knowledgeable friend.
-- Lead directly with the answer in the first sentence.
-- Use simple bullet points if listing facts or details.
-- Be concise, friendly, and accurate.
-- Never output raw source labels, code blocks, or debug tags.`;
+ROLE & STYLE CONSTRAINTS:
+- Deliver direct, definitive, and accurate answers in plain English.
+- Lead directly with the factual answer in the very first sentence.
+- NEVER state your name, model name, identity, or developer (do NOT say "I am Web Search Assistant", "I am Nemotron", "I am an AI", "As a language model", etc.).
+- Never output raw bracket labels (like [WIKIPEDIA FACTUAL GROUNDING] or [REAL-TIME NEWS & MEDIA COVERAGE]), internal debug tags, or model citations in the text.
+- Use bullet points for specific data, metrics, prices, and facts.
+- Answer must be completely factual and grounded in the latest real-time web information.`;
 
-const FALLBACK_INSTRUCTION = `You are a helpful search assistant.
+const FALLBACK_INSTRUCTION = `You are a real-time web search engine.
 
 ROLE & BEHAVIOR:
 - Answer the user's question directly, simply, and concisely.
-- Lead with the answer, then provide clear supporting details.
-- Use plain language and bullet points where helpful.`;
+- Lead with the definitive answer in the first sentence.
+- Never state any name, persona, or identity.
+- Use plain language and clean bullet points for facts and figures.`;
 
 let aiClient: GoogleGenAI | null = null;
 let lastApiKeyUsed: string | null = null;
@@ -113,11 +115,14 @@ async function callNvidiaNIM(
   systemPrompt: string,
   nvidiaKey: string
 ): Promise<string> {
+  // Bigger models for highest accuracy: Nemotron and flagship 70B/340B/405B models
+  // Prioritizing Nemotron 70B & 340B as requested ("use nemotron 3 like that modules insted of less models")
   const models = [
-    "meta/llama-3.3-70b-instruct",
-    "meta/llama-3.1-70b-instruct",
     "nvidia/llama-3.1-nemotron-70b-instruct",
-    "meta/llama-3.1-8b-instruct",
+    "nvidia/nemotron-4-340b-instruct",
+    "meta/llama-3.1-405b-instruct",
+    "meta/llama-3.3-70b-instruct",
+    "deepseek-ai/deepseek-r1",
   ];
 
   for (const model of models) {
@@ -138,9 +143,9 @@ async function callNvidiaNIM(
             })),
           ],
           temperature: 0.2,
-          max_tokens: 1024,
+          max_tokens: 2048,
         }),
-        signal: AbortSignal.timeout(12000),
+        signal: AbortSignal.timeout(15000),
       });
 
       if (res.ok) {
@@ -302,179 +307,148 @@ export async function handleChatMessage(
   // 1. Check for simple greeting / conversational pleasantry
   if (isGreetingOrPleasantry(latestUserQuery)) {
     return {
-      text: "Hello! How can I help you today? Feel free to ask me anything or search for real-time information, news, weather, or facts.",
+      text: "Hello! What can I search or find for you today? Ask about current events, breaking news, market prices, weather, technical facts, or any topic.",
       searchQueries: [],
       sources: [],
     };
   }
 
-  const ai = getAI();
-  const nvidiaKey = getNvidiaKey();
+  // 2. WEB FIRST SEARCH: Always fetch real-time web facts, news, encyclopedic, and market data first!
+  const liveResults = await searchLiveWeb(latestUserQuery);
+  let sources = [...liveResults.sources];
+  let searchQueries = [...liveResults.searchQueries];
 
-  // 2. If NVIDIA API key is provided and no Gemini key (or user preferred NVIDIA)
-  if (!ai && nvidiaKey) {
-    const liveResults = await searchLiveWeb(latestUserQuery);
-    const liveInstruction = `${SYSTEM_INSTRUCTION}
+  const liveInstruction = `${SYSTEM_INSTRUCTION}
 
-REAL-TIME WEB SEARCH RESULTS:
+REAL-TIME WEB FIRST SEARCH RESULTS & GROUNDING FACTS:
 ${liveResults.context || "No live search results available."}
 
 INSTRUCTIONS:
-- Give a simple, direct, and concise answer based on the real-time facts above.
-- Lead with the answer immediately.
-- Use plain bullet points for simple lists.
-- Do not mention instructions or debug labels.`;
+- Synthesize a direct, definitive, and accurate answer based on the real-time facts above.
+- Lead directly with the answer in the first sentence.
+- NEVER state your name, model name, or persona.
+- Use clean bullet points for specific numbers, dates, prices, or details.
+- Do not mention raw instruction tags or brackets.`;
 
+  const nvidiaKey = getNvidiaKey();
+  const ai = getAI();
+
+  // 3. If NVIDIA key is configured, prioritize Nemotron / big NIM models as requested
+  if (nvidiaKey) {
     const nvidiaText = await callNvidiaNIM(messages, liveInstruction, nvidiaKey);
     if (nvidiaText) {
       return {
         text: nvidiaText,
-        searchQueries: liveResults.searchQueries,
-        sources: liveResults.sources,
+        searchQueries,
+        sources,
       };
     }
-
-    // If NVIDIA call didn't return text, format clean direct results
-    return {
-      text: formatCleanDirectResults(latestUserQuery, liveResults),
-      searchQueries: liveResults.searchQueries,
-      sources: liveResults.sources,
-    };
   }
 
-  // 3. If neither Gemini nor NVIDIA key is configured, serve with clean direct web search
-  if (!ai) {
-    const liveResults = await searchLiveWeb(latestUserQuery);
-    return {
-      text: formatCleanDirectResults(latestUserQuery, liveResults),
-      searchQueries: liveResults.searchQueries,
-      sources: liveResults.sources,
-    };
-  }
+  // 4. Gemini processing using big model (gemini-2.5-pro / gemini-2.5-flash) with Google Search grounding
+  if (ai) {
+    const contents = messages.map((m) => ({
+      role: m.role === "assistant" || m.role === "model" ? "model" : "user",
+      parts: [{ text: m.content }],
+    }));
 
-  // 4. Gemini processing
-  const contents = messages.map((m) => ({
-    role: m.role === "assistant" || m.role === "model" ? "model" : "user",
-    parts: [{ text: m.content }],
-  }));
+    let response: any;
+    const isSearchInCooldown = Date.now() < searchQuotaCooldownUntil;
 
-  let response: any;
-  let sources: Array<{ title: string; uri: string }> = [];
-  let searchQueries: string[] = [];
+    if (!isSearchInCooldown) {
+      try {
+        response = await ai.models.generateContent({
+          model: "gemini-2.5-pro",
+          contents,
+          config: {
+            systemInstruction: liveInstruction,
+            tools: [{ googleSearch: {} }],
+          },
+        });
 
-  const isSearchInCooldown = Date.now() < searchQuotaCooldownUntil;
-  let usedGeminiSearch = false;
+        const grounding = response?.candidates?.[0]?.groundingMetadata;
+        if (grounding?.webSearchQueries?.length) {
+          searchQueries = Array.from(new Set([...searchQueries, ...grounding.webSearchQueries]));
+          const seenUris = new Set(sources.map((s) => s.uri));
+          for (const chunk of grounding.groundingChunks || []) {
+            if (chunk.web?.uri && !seenUris.has(chunk.web.uri)) {
+              seenUris.add(chunk.web.uri);
+              sources.push({
+                title: chunk.web.title || chunk.web.uri,
+                uri: chunk.web.uri,
+              });
+            }
+          }
+        }
+      } catch (proErr: unknown) {
+        if (isQuotaOrRateLimitError(proErr)) {
+          searchQuotaCooldownUntil = Date.now() + 60_000;
+          console.log("[Info] Gemini Pro search quota reached, falling back to Gemini Flash with live grounding.");
+        } else {
+          console.log("[Info] Gemini Pro fallback triggered:", cleanErrorMessage(proErr));
+        }
 
-  if (!isSearchInCooldown) {
-    try {
-      response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
-        contents,
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
-          tools: [{ googleSearch: {} }],
-        },
-      });
-
-      const grounding = response?.candidates?.[0]?.groundingMetadata;
-      if (grounding?.webSearchQueries?.length) {
-        usedGeminiSearch = true;
-        searchQueries = grounding.webSearchQueries;
-        const seenUris = new Set<string>();
-        for (const chunk of grounding.groundingChunks || []) {
-          if (chunk.web?.uri && !seenUris.has(chunk.web.uri)) {
-            seenUris.add(chunk.web.uri);
-            sources.push({
-              title: chunk.web.title || chunk.web.uri,
-              uri: chunk.web.uri,
+        // Try gemini-2.5-flash or gemini-3.8-flash with live web grounding
+        try {
+          response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents,
+            config: {
+              systemInstruction: liveInstruction,
+            },
+          });
+        } catch {
+          try {
+            response = await ai.models.generateContent({
+              model: "gemini-3.8-flash",
+              contents,
+              config: {
+                systemInstruction: liveInstruction,
+              },
             });
+          } catch (flashErr) {
+            console.warn("[Warning] All Gemini attempts failed:", cleanErrorMessage(flashErr));
           }
         }
       }
-    } catch (searchErr: unknown) {
-      if (isQuotaOrRateLimitError(searchErr)) {
-        searchQuotaCooldownUntil = Date.now() + 60_000;
-        console.log("[Info] Native search quota reached, using multi-source search.");
-      } else {
-        console.log("[Info] Native search bypassed, using multi-source search.");
-      }
-    }
-  }
-
-  // Multi-source Real-Time Web Search fallback
-  if (!usedGeminiSearch) {
-    const liveResults = await searchLiveWeb(latestUserQuery);
-    sources = liveResults.sources;
-    searchQueries = liveResults.searchQueries;
-
-    const liveInstruction = `${SYSTEM_INSTRUCTION}
-
-REAL-TIME LIVE DATA & VERIFIED WEB SEARCH SOURCES:
-${liveResults.context || "No live search results available."}
-
-INSTRUCTIONS FOR CURRENT REAL-TIME DATA:
-- Answer directly and simply based on the verified sources above.
-- Report specific figures, prices, dates, or scores mentioned in the sources.
-- Provide a simple, articulate, and accurate response.`;
-
-    try {
-      response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-lite",
-        contents,
-        config: {
-          systemInstruction: liveInstruction,
-        },
-      });
-    } catch {
+    } else {
+      // Cooldown active, use gemini-2.5-pro or flash with pre-fetched live web grounding
       try {
         response = await ai.models.generateContent({
-          model: "gemini-3.8-flash",
+          model: "gemini-2.5-pro",
           contents,
           config: {
             systemInstruction: liveInstruction,
           },
         });
-      } catch (modelErr) {
-        console.log("[Info] Gemini fallback triggered:", cleanErrorMessage(modelErr));
-        // If NVIDIA key exists, try NVIDIA as backup
-        if (nvidiaKey) {
-          const nvBackup = await callNvidiaNIM(messages, liveInstruction, nvidiaKey);
-          if (nvBackup) {
-            return {
-              text: nvBackup,
-              searchQueries,
-              sources,
-            };
-          }
+      } catch {
+        try {
+          response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents,
+            config: {
+              systemInstruction: liveInstruction,
+            },
+          });
+        } catch (flashErr) {
+          console.warn("[Warning] Gemini fallback during cooldown failed:", cleanErrorMessage(flashErr));
         }
       }
     }
-  }
 
-  let responseText = extractResponseText(response);
-
-  if (!responseText.trim()) {
-    try {
-      const emergencyResponse = await ai.models.generateContent({
-        model: "gemini-3.1-flash-lite",
-        contents,
-        config: {
-          systemInstruction: FALLBACK_INSTRUCTION,
-        },
-      });
-      responseText = extractResponseText(emergencyResponse);
-    } catch {
-      // ignore
-    }
-
-    if (!responseText.trim()) {
-      const liveResults = await searchLiveWeb(latestUserQuery);
-      responseText = formatCleanDirectResults(latestUserQuery, liveResults);
+    let responseText = extractResponseText(response);
+    if (responseText && responseText.trim()) {
+      return {
+        text: responseText.trim(),
+        searchQueries,
+        sources,
+      };
     }
   }
 
+  // 5. If models are unavailable or returned empty, present the clean direct web search findings
   return {
-    text: responseText,
+    text: formatCleanDirectResults(latestUserQuery, liveResults),
     searchQueries,
     sources,
   };

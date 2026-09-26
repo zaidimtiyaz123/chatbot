@@ -1,4 +1,4 @@
-import { Bot, RotateCcw, Search, ShieldCheck, Sparkles } from "lucide-react";
+import { Globe, RotateCcw, Search, ShieldCheck } from "lucide-react";
 
 interface HeaderProps {
   onReset: () => void;
@@ -11,20 +11,20 @@ export function Header({ onReset, messageCount }: HeaderProps) {
       <div className="mx-auto flex max-w-4xl items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-900 text-white shadow-sm">
-            <Bot className="h-5 w-5" />
+            <Globe className="h-5 w-5" />
           </div>
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-base sm:text-lg font-semibold tracking-tight text-zinc-900">
-                Web Search Assistant
+                Web First Search
               </h1>
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-600/20">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Live Search Active
+                Web-First Active
               </span>
             </div>
             <p className="text-xs text-zinc-500 hidden sm:block">
-              Verifies real-time facts, current events, and official sources before answering
+              Searches live web sources, breaking news, and verified facts first before answering
             </p>
           </div>
         </div>

@@ -232,7 +232,7 @@ export async function searchLiveWeb(query: string): Promise<LiveSearchResult> {
     })()
   );
 
-  // 5. DuckDuckGo Instant Answer API
+  // 5. DuckDuckGo Instant Answer API & Related Web Topics
   tasks.push(
     (async () => {
       try {
@@ -243,14 +243,40 @@ export async function searchLiveWeb(query: string): Promise<LiveSearchResult> {
 
         if (res.ok) {
           const data = await res.json();
+          const ddgSnippets: string[] = [];
+
           if (data.AbstractText) {
             const abstract = cleanText(data.AbstractText);
             const uri = data.AbstractURL || "https://duckduckgo.com";
-            contextSections.push(
-              `[DUCKDUCKGO INSTANT ANSWER]\nHeading: ${data.Heading || query}\nAbstract: ${abstract}\nLink: ${uri}`
-            );
+            ddgSnippets.push(`Heading: ${data.Heading || query}\nAbstract: ${abstract}\nLink: ${uri}`);
             addSource(data.Heading || "DuckDuckGo Instant Overview", uri);
-            searchQueries.push("DuckDuckGo Instant Knowledge");
+          }
+
+          if (Array.isArray(data.RelatedTopics)) {
+            for (const item of data.RelatedTopics) {
+              if (item.Text && item.FirstURL) {
+                const text = cleanText(item.Text);
+                const uri = item.FirstURL;
+                ddgSnippets.push(`Topic: ${text}\nLink: ${uri}`);
+                const shortTitle = text.slice(0, 70);
+                addSource(shortTitle, uri);
+              } else if (Array.isArray(item.Topics)) {
+                for (const sub of item.Topics) {
+                  if (sub.Text && sub.FirstURL) {
+                    const text = cleanText(sub.Text);
+                    const uri = sub.FirstURL;
+                    ddgSnippets.push(`Topic: ${text}\nLink: ${uri}`);
+                    addSource(text.slice(0, 70), uri);
+                  }
+                }
+              }
+              if (ddgSnippets.length >= 4) break;
+            }
+          }
+
+          if (ddgSnippets.length > 0) {
+            contextSections.push(`[DUCKDUCKGO WEB KNOWLEDGE]\n${ddgSnippets.join("\n\n")}`);
+            searchQueries.push("DuckDuckGo Web Knowledge");
           }
         }
       } catch {

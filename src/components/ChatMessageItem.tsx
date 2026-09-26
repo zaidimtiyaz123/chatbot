@@ -1,6 +1,6 @@
 import { useState } from "react";
 import Markdown from "react-markdown";
-import { Check, Copy, User, Bot, AlertCircle, RefreshCw, Info } from "lucide-react";
+import { Check, Copy, User, Globe, AlertCircle, RefreshCw, Info } from "lucide-react";
 import { ChatMessage } from "../types";
 import { SourcesList } from "./SourcesList";
 
@@ -51,7 +51,7 @@ export function ChatMessageItem({ message, onRetry }: ChatMessageItemProps) {
   return (
     <div className="flex gap-3 items-start my-4">
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-zinc-900 text-white shadow-xs">
-        <Bot className="h-4 w-4" />
+        <Globe className="h-4 w-4" />
       </div>
 
       <div className="flex flex-col items-start flex-1 min-w-0 max-w-[95%] sm:max-w-[88%]">
@@ -66,7 +66,7 @@ export function ChatMessageItem({ message, onRetry }: ChatMessageItemProps) {
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2 text-rose-700 font-medium text-sm">
                 <AlertCircle className="h-4 w-4 shrink-0" />
-                <span>Search Assistant encountered an issue</span>
+                <span>Web search encountered an issue</span>
               </div>
               <p className="text-xs sm:text-sm text-rose-800 leading-relaxed">
                 {message.content}

@@ -88,10 +88,10 @@ function isCryptoQuery(query: string): boolean {
 }
 
 export async function searchClientLive(query: string): Promise<ClientSearchResult> {
-  // If user says a greeting like "hi" or "hello", return a warm, simple welcome
+  // If user says a greeting like "hi" or "hello", return a direct, polite greeting with no AI name
   if (isGreetingOrPleasantry(query)) {
     return {
-      text: "Hello! How can I help you today? Feel free to ask me anything or search for the latest news, weather, facts, or live rates.",
+      text: "Hello! What can I search or find for you today? Ask about current events, breaking news, market prices, weather, technical facts, or any topic.",
       sources: [],
       searchQueries: [],
     };
@@ -210,7 +210,7 @@ export async function searchClientLive(query: string): Promise<ClientSearchResul
     })()
   );
 
-  // 4. DuckDuckGo Instant Answer
+  // 4. DuckDuckGo Instant Answer & Related Topics
   tasks.push(
     (async () => {
       try {
@@ -228,6 +228,18 @@ export async function searchClientLive(query: string): Promise<ClientSearchResul
             findings.push(`**${heading}**: ${abstract}`);
             addSource(data.Heading || "DuckDuckGo Instant Overview", uri);
             searchQueries.push("DuckDuckGo Instant Knowledge");
+          }
+
+          if (Array.isArray(data.RelatedTopics)) {
+            for (const item of data.RelatedTopics) {
+              if (item.Text && item.FirstURL) {
+                const text = cleanText(item.Text);
+                const uri = item.FirstURL;
+                findings.push(`* ${text}`);
+                addSource(text.slice(0, 60), uri);
+              }
+              if (findings.length >= 4) break;
+            }
           }
         }
       } catch {
