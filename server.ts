@@ -9,12 +9,12 @@ dotenv.config();
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: "5mb" }));
 
-  // Health check
-  app.get("/api/health", (_req: Request, res: Response) => {
+  // Health check endpoints for Cloud Run / load balancers
+  app.get(["/api/health", "/health", "/_health", "/healthz"], (_req: Request, res: Response) => {
     res.json({
       status: "ok",
       timestamp: new Date().toISOString(),
@@ -38,7 +38,6 @@ async function startServer() {
         text: "I searched for live information on your question. Please try asking again or verify your search terms.",
         searchQueries: [],
         sources: [],
-        searchNotice: err?.message || "Internal error occurred",
       });
     }
   });

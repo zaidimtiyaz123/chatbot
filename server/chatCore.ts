@@ -1,44 +1,24 @@
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
-import { searchLiveWeb } from "./search.ts";
+import { searchLiveWeb, type LiveSearchResult } from "./search.ts";
 
 dotenv.config();
 
-const SYSTEM_INSTRUCTION = `You are "Web Search Assistant", a search assistant.
+const SYSTEM_INSTRUCTION = `You are a helpful search assistant.
 
-ROLE
-- Your job is to answer user questions by searching for relevant, up-to-date information, then giving a clear, accurate answer.
-- Always search before answering if the question involves facts, current events, prices, availability, or anything that could have changed recently. Don't rely only on memory for time-sensitive topics.
+ROLE & STYLE:
+- Give a clear, direct, and simple answer in plain language, just like a knowledgeable friend.
+- Lead directly with the answer in the first sentence.
+- Use simple bullet points if listing facts or details.
+- Be concise, friendly, and accurate.
+- Never output raw source labels, code blocks, or debug tags.`;
 
-BEHAVIOR
-1. Understand the user's question. If it's vague, ask one short clarifying question before searching.
-2. Run a search using the available search tool with a short, specific query (3-6 words).
-3. Read the top results and pick the most relevant, trustworthy ones (official sites, reputable sources over random blogs).
-4. Summarize the answer in your own words — do not copy text directly from sources.
-5. If sources disagree, mention that briefly instead of picking one silently.
-6. If no good result is found, say so honestly instead of guessing.
+const FALLBACK_INSTRUCTION = `You are a helpful search assistant.
 
-RESPONSE STYLE
-- Be concise and direct. Lead with the answer, then add supporting detail if needed.
-- Use plain language, avoid jargon unless the user is clearly technical.
-- Cite sources by name (e.g., "According to Reuters...") when relevant.
-- Use bullet points for lists, plain sentences for simple answers.
-
-LIMITS
-- Don't make up facts, links, or statistics.
-- Don't give medical, legal, or financial advice as fact — provide general info and suggest consulting a professional.
-- If a query is outside your scope, politely redirect the user.
-
-GOAL
-Be fast, accurate, and easy to talk to — like a knowledgeable friend who always checks their facts before answering.`;
-
-const FALLBACK_INSTRUCTION = `You are "Web Search Assistant", a search assistant.
-
-ROLE & BEHAVIOR
-- Answer the user's question directly, accurately, and concisely.
+ROLE & BEHAVIOR:
+- Answer the user's question directly, simply, and concisely.
 - Lead with the answer, then provide clear supporting details.
-- Use plain language and bullet points where helpful.
-- If information is time-sensitive or might have changed recently, note that politely.`;
+- Use plain language and bullet points where helpful.`;
 
 let aiClient: GoogleGenAI | null = null;
 let lastApiKeyUsed: string | null = null;
@@ -70,11 +50,62 @@ function getAI(): GoogleGenAI | null {
 }
 
 function getNvidiaKey(): string | null {
-  const key = process.env.NVIDIA_API_KEY || process.env.NV_API_KEY;
-  if (key) return key.trim();
+  const key =
+    process.env.NVIDIA_API_KEY ||
+    process.env.NV_API_KEY ||
+    process.env.NVIDIA_KEY ||
+    process.env.NIM_API_KEY ||
+    process.env.VITE_NVIDIA_API_KEY;
+  if (key && key.trim()) return key.trim();
+
   const generic = process.env.API_KEY;
-  if (generic && generic.startsWith("nvapi-")) return generic.trim();
+  if (generic && generic.trim() && (generic.startsWith("nvapi-") || !generic.startsWith("AIza"))) {
+    return generic.trim();
+  }
   return null;
+}
+
+function isGreetingOrPleasantry(query: string): boolean {
+  if (!query) return false;
+  const clean = query.trim().toLowerCase().replace(/[!?.,;:'"()]/g, "");
+  const exact = new Set([
+    "hi",
+    "hello",
+    "hey",
+    "heyy",
+    "heyyy",
+    "hi there",
+    "hello there",
+    "hey there",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "good day",
+    "how are you",
+    "how are you doing",
+    "hows it going",
+    "whats up",
+    "sup",
+    "who are you",
+    "what are you",
+    "what can you do",
+    "help",
+    "thanks",
+    "thank you",
+    "bye",
+    "goodbye",
+    "good night",
+    "ok",
+    "okay",
+  ]);
+  if (exact.has(clean)) return true;
+  if (clean.startsWith("hi ") || clean.startsWith("hello ") || clean.startsWith("hey ")) {
+    const rest = clean.replace(/^(hi|hello|hey)\s+/, "").trim();
+    if (rest.length <= 15 && (exact.has(rest) || rest === "assistant" || rest === "friend")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 async function callNvidiaNIM(
@@ -118,12 +149,86 @@ async function callNvidiaNIM(
         if (content && typeof content === "string" && content.trim()) {
           return content.trim();
         }
+      } else {
+        const errText = await res.text().catch(() => "");
+        console.warn(`[NVIDIA NIM ${model}] HTTP ${res.status}:`, errText.slice(0, 150));
       }
-    } catch {
-      // try next model
+    } catch (err: any) {
+      console.warn(`[NVIDIA NIM ${model} fetch failed]:`, err?.message);
     }
   }
   return "";
+}
+
+function formatCleanDirectResults(query: string, liveResults: LiveSearchResult): string {
+  const context = liveResults.context || "";
+  if (!context.trim()) {
+    return `I searched for information on **"${query}"**, but could not find matching live records. Please try asking with more specific keywords.`;
+  }
+
+  const lines: string[] = [];
+
+  // Extract weather if present
+  const weatherMatch = context.match(/Currently in \*\*([^*]+)\*\*.*?is \*\*([^*]+)\*\*(.*?)(?=\n|$)/i);
+  if (weatherMatch) {
+    lines.push(`Currently in **${weatherMatch[1]}**, the temperature is **${weatherMatch[2]}**${weatherMatch[3]}.`);
+  }
+
+  // Extract crypto if present
+  if (context.includes("Bitcoin (BTC)")) {
+    const cryptoLines = context
+      .split("\n")
+      .filter((l) => l.trim().startsWith("* **") && (l.includes("BTC") || l.includes("ETH") || l.includes("SOL")));
+    if (cryptoLines.length > 0) {
+      lines.push("Here are the latest cryptocurrency prices:\n" + cryptoLines.join("\n"));
+    }
+  }
+
+  // Extract Wikipedia summaries cleanly
+  const wikiMatches = [...context.matchAll(/Topic:\s*(.+?)\n\s*Summary:\s*(.+?)(?=\n\s*Link:|$)/gi)];
+  if (wikiMatches.length > 0 && lines.length === 0) {
+    const topWiki = wikiMatches.slice(0, 3);
+    for (const match of topWiki) {
+      const topic = match[1].trim();
+      const summary = match[2].trim().replace(/<[^>]+>/g, "");
+      lines.push(`* **${topic}**: ${summary}`);
+    }
+  }
+
+  // Extract news headlines cleanly
+  const newsMatches = [...context.matchAll(/Title:\s*(.+?)\n\s*Source:\s*(.+?)\s*\|\s*Date:\s*(.+?)(?=\n\s*Link:|$)/gi)];
+  if (newsMatches.length > 0) {
+    const topNews = newsMatches.slice(0, 4);
+    const newsList: string[] = [];
+    for (const match of topNews) {
+      const title = match[1].trim();
+      const source = match[2].trim();
+      newsList.push(`* **${title}** (${source})`);
+    }
+    if (newsList.length > 0) {
+      lines.push("Recent updates & news:\n" + newsList.join("\n"));
+    }
+  }
+
+  if (lines.length > 0) {
+    return lines.join("\n\n");
+  }
+
+  // Fallback cleanup: strip any [BRACKETS] and debug tags
+  let cleaned = context
+    .replace(/\[.*?\]/g, "")
+    .replace(/Link:\s*https?:\/\/\S+/gi, "")
+    .replace(/Topic:\s*/gi, "**")
+    .replace(/Summary:\s*/gi, "**: ")
+    .replace(/Title:\s*/gi, "* ")
+    .replace(/Source:\s*([^\n|]+)\s*\|\s*Date:\s*[^\n]+/gi, "($1)")
+    .replace(/Heading:\s*/gi, "**")
+    .replace(/Abstract:\s*/gi, "**: ")
+    .replace(/---\s*/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return cleaned || `Here is what I found for **"${query}"**. See the verified sources below for more details.`;
 }
 
 function extractResponseText(response: any): string {
@@ -159,7 +264,7 @@ function isHighDemandError(err: unknown): boolean {
 
 function cleanErrorMessage(err: unknown): string {
   if (isQuotaOrRateLimitError(err)) {
-    return "Gemini API quota or rate limit reached. Using verified live web search results.";
+    return "API quota or rate limit reached. Using verified live web search results.";
   }
   if (isHighDemandError(err)) {
     return "The model is currently experiencing high demand. Grounded with live web search.";
@@ -194,22 +299,31 @@ export async function handleChatMessage(
   const userMsgs = messages.filter((m) => m.role === "user");
   const latestUserQuery = userMsgs[userMsgs.length - 1]?.content || "";
 
+  // 1. Check for simple greeting / conversational pleasantry
+  if (isGreetingOrPleasantry(latestUserQuery)) {
+    return {
+      text: "Hello! How can I help you today? Feel free to ask me anything or search for real-time information, news, weather, or facts.",
+      searchQueries: [],
+      sources: [],
+    };
+  }
+
   const ai = getAI();
   const nvidiaKey = getNvidiaKey();
 
-  // 1. If NVIDIA API key is provided and no Gemini key (or user preferred NVIDIA)
+  // 2. If NVIDIA API key is provided and no Gemini key (or user preferred NVIDIA)
   if (!ai && nvidiaKey) {
     const liveResults = await searchLiveWeb(latestUserQuery);
     const liveInstruction = `${SYSTEM_INSTRUCTION}
 
-[REAL-TIME LIVE DATA & VERIFIED WEB SEARCH SOURCES]:
+REAL-TIME WEB SEARCH RESULTS:
 ${liveResults.context || "No live search results available."}
 
-INSTRUCTIONS FOR CURRENT REAL-TIME DATA:
-- Answer based directly on the verified real-time sources above.
-- Report specific figures, prices, dates, event outcomes, or scores mentioned in the sources.
-- Cite the sources by name where helpful.
-- Provide a direct, articulate, and accurate response.`;
+INSTRUCTIONS:
+- Give a simple, direct, and concise answer based on the real-time facts above.
+- Lead with the answer immediately.
+- Use plain bullet points for simple lists.
+- Do not mention instructions or debug labels.`;
 
     const nvidiaText = await callNvidiaNIM(messages, liveInstruction, nvidiaKey);
     if (nvidiaText) {
@@ -217,44 +331,34 @@ INSTRUCTIONS FOR CURRENT REAL-TIME DATA:
         text: nvidiaText,
         searchQueries: liveResults.searchQueries,
         sources: liveResults.sources,
-        searchNotice: `Synthesized with NVIDIA NIM (${liveResults.sources.length} live verified sources).`,
       };
     }
-  }
 
-  // 2. If neither Gemini nor NVIDIA key is configured, serve directly with multi-source live web search
-  if (!ai) {
-    const liveResults = await searchLiveWeb(latestUserQuery);
-    let text = "";
-    if (liveResults.context) {
-      text =
-        `Here is the latest live information found for **"${latestUserQuery}"**:\n\n` +
-        liveResults.context +
-        "\n\n" +
-        (liveResults.sources.length > 0
-          ? "### Verified Sources:\n" +
-            liveResults.sources.slice(0, 6).map((s) => `* [${s.title}](${s.uri})`).join("\n")
-          : "");
-    } else {
-      text = `I searched for information on **"${latestUserQuery}"**, but could not retrieve matching live records. Please try asking with more specific keywords.`;
-    }
+    // If NVIDIA call didn't return text, format clean direct results
     return {
-      text,
+      text: formatCleanDirectResults(latestUserQuery, liveResults),
       searchQueries: liveResults.searchQueries,
       sources: liveResults.sources,
-      searchNotice:
-        "Live web search results (direct query mode). You can also add GEMINI_API_KEY or NVIDIA_API_KEY in environment variables for AI model synthesis.",
     };
   }
 
-  // 3. Gemini processing
+  // 3. If neither Gemini nor NVIDIA key is configured, serve with clean direct web search
+  if (!ai) {
+    const liveResults = await searchLiveWeb(latestUserQuery);
+    return {
+      text: formatCleanDirectResults(latestUserQuery, liveResults),
+      searchQueries: liveResults.searchQueries,
+      sources: liveResults.sources,
+    };
+  }
+
+  // 4. Gemini processing
   const contents = messages.map((m) => ({
     role: m.role === "assistant" || m.role === "model" ? "model" : "user",
     parts: [{ text: m.content }],
   }));
 
   let response: any;
-  let searchNotice: string | undefined;
   let sources: Array<{ title: string; uri: string }> = [];
   let searchQueries: string[] = [];
 
@@ -290,9 +394,9 @@ INSTRUCTIONS FOR CURRENT REAL-TIME DATA:
     } catch (searchErr: unknown) {
       if (isQuotaOrRateLimitError(searchErr)) {
         searchQuotaCooldownUntil = Date.now() + 60_000;
-        console.log("[Info] Native search quota hit, activating multi-source real-time web search.");
+        console.log("[Info] Native search quota reached, using multi-source search.");
       } else {
-        console.log("[Info] Native search bypassed, using multi-source real-time web search.");
+        console.log("[Info] Native search bypassed, using multi-source search.");
       }
     }
   }
@@ -305,14 +409,13 @@ INSTRUCTIONS FOR CURRENT REAL-TIME DATA:
 
     const liveInstruction = `${SYSTEM_INSTRUCTION}
 
-[REAL-TIME LIVE DATA & VERIFIED WEB SEARCH SOURCES]:
+REAL-TIME LIVE DATA & VERIFIED WEB SEARCH SOURCES:
 ${liveResults.context || "No live search results available."}
 
 INSTRUCTIONS FOR CURRENT REAL-TIME DATA:
-- Answer based directly on the verified real-time sources above.
-- Report specific figures, prices, dates, event outcomes, or scores mentioned in the sources.
-- Cite the sources by name where helpful.
-- Provide a direct, articulate, and accurate response.`;
+- Answer directly and simply based on the verified sources above.
+- Report specific figures, prices, dates, or scores mentioned in the sources.
+- Provide a simple, articulate, and accurate response.`;
 
     try {
       response = await ai.models.generateContent({
@@ -341,15 +444,10 @@ INSTRUCTIONS FOR CURRENT REAL-TIME DATA:
               text: nvBackup,
               searchQueries,
               sources,
-              searchNotice: `Synthesized with NVIDIA NIM (${sources.length} live verified sources).`,
             };
           }
         }
       }
-    }
-
-    if (sources.length > 0) {
-      searchNotice = `Grounded with real-time web sources (${sources.length} live verified sources).`;
     }
   }
 
@@ -370,14 +468,8 @@ INSTRUCTIONS FOR CURRENT REAL-TIME DATA:
     }
 
     if (!responseText.trim()) {
-      if (sources.length > 0) {
-        responseText =
-          `Here are the latest verified live results found for **"${latestUserQuery}"**:\n\n` +
-          sources.slice(0, 5).map((s) => `* [${s.title}](${s.uri})`).join("\n\n");
-      } else {
-        responseText =
-          "I've searched for live information regarding your query, but could not retrieve matching verified sources right now. Please try asking with more specific keywords.";
-      }
+      const liveResults = await searchLiveWeb(latestUserQuery);
+      responseText = formatCleanDirectResults(latestUserQuery, liveResults);
     }
   }
 
@@ -385,6 +477,5 @@ INSTRUCTIONS FOR CURRENT REAL-TIME DATA:
     text: responseText,
     searchQueries,
     sources,
-    searchNotice,
   };
 }

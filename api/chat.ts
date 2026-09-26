@@ -41,10 +41,9 @@ export default async function handler(req: any, res: any) {
   } catch (err: any) {
     console.error("[Vercel /api/chat error]:", err);
     res.status(200).json({
-      text: "I experienced a temporary issue reaching the AI backend. Please verify your query or try again shortly.",
+      text: "I experienced a temporary issue reaching the search backend. Please try again shortly.",
       searchQueries: [],
       sources: [],
-      searchNotice: err?.message || "Serverless execution notice",
     });
   }
 }

@@ -2,7 +2,7 @@ export interface ClientSearchResult {
   text: string;
   sources: Array<{ title: string; uri: string }>;
   searchQueries: string[];
-  searchNotice: string;
+  searchNotice?: string;
 }
 
 function cleanText(text: string): string {
@@ -16,6 +16,49 @@ function cleanText(text: string): string {
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function isGreetingOrPleasantry(query: string): boolean {
+  if (!query) return false;
+  const clean = query.trim().toLowerCase().replace(/[!?.,;:'"()]/g, "");
+  const greetings = new Set([
+    "hi",
+    "hello",
+    "hey",
+    "heyy",
+    "heyyy",
+    "hi there",
+    "hello there",
+    "hey there",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "good day",
+    "how are you",
+    "how are you doing",
+    "hows it going",
+    "whats up",
+    "sup",
+    "who are you",
+    "what are you",
+    "what can you do",
+    "help",
+    "thanks",
+    "thank you",
+    "bye",
+    "goodbye",
+    "good night",
+    "ok",
+    "okay",
+  ]);
+  if (greetings.has(clean)) return true;
+  if (clean.startsWith("hi ") || clean.startsWith("hello ") || clean.startsWith("hey ")) {
+    const rest = clean.replace(/^(hi|hello|hey)\s+/, "").trim();
+    if (rest.length <= 15 && (greetings.has(rest) || rest === "assistant" || rest === "friend")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function extractCityForWeather(query: string): string | null {
@@ -45,6 +88,15 @@ function isCryptoQuery(query: string): boolean {
 }
 
 export async function searchClientLive(query: string): Promise<ClientSearchResult> {
+  // If user says a greeting like "hi" or "hello", return a warm, simple welcome
+  if (isGreetingOrPleasantry(query)) {
+    return {
+      text: "Hello! How can I help you today? Feel free to ask me anything or search for the latest news, weather, facts, or live rates.",
+      sources: [],
+      searchQueries: [],
+    };
+  }
+
   const sources: Array<{ title: string; uri: string }> = [];
   const searchQueries: string[] = [query];
   const findings: string[] = [];
@@ -74,7 +126,7 @@ export async function searchClientLive(query: string): Promise<ClientSearchResul
             const sol = data.solana ? `$${data.solana.usd?.toLocaleString()} (${data.solana.usd_24h_change?.toFixed(2)}% 24h)` : "N/A";
 
             findings.push(
-              `### Live Cryptocurrency Rates\n` +
+              `Here are the latest cryptocurrency prices:\n\n` +
               `* **Bitcoin (BTC)**: ${btc}\n` +
               `* **Ethereum (ETH)**: ${eth}\n` +
               `* **Solana (SOL)**: ${sol}`
@@ -83,7 +135,7 @@ export async function searchClientLive(query: string): Promise<ClientSearchResul
             searchQueries.push("CoinGecko Live Rates");
           }
         } catch {
-          // ignore error
+          // ignore
         }
       })()
     );
@@ -113,10 +165,7 @@ export async function searchClientLive(query: string): Promise<ClientSearchResul
                 if (cw) {
                   const fahrenheit = ((cw.temperature * 9) / 5 + 32).toFixed(1);
                   findings.push(
-                    `### Current Weather for ${loc.name}, ${loc.country || ""}\n` +
-                    `* **Temperature**: ${cw.temperature}°C (${fahrenheit}°F)\n` +
-                    `* **Wind Speed**: ${cw.windspeed} km/h\n` +
-                    `* **Updated**: ${new Date(cw.time).toLocaleTimeString()}`
+                    `Currently in **${loc.name}, ${loc.country || ""}**, the temperature is **${cw.temperature}°C (${fahrenheit}°F)** with winds at ${cw.windspeed} km/h.`
                   );
                   addSource(`Open-Meteo Weather for ${loc.name}`, `https://open-meteo.com`);
                   searchQueries.push(`Weather in ${loc.name}`);
@@ -125,7 +174,7 @@ export async function searchClientLive(query: string): Promise<ClientSearchResul
             }
           }
         } catch {
-          // ignore error
+          // ignore
         }
       })()
     );
@@ -148,7 +197,7 @@ export async function searchClientLive(query: string): Promise<ClientSearchResul
             const snippet = cleanText(item.snippet);
             const title = item.title;
             const uri = `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`;
-            findings.push(`**${title}**: ${snippet}...`);
+            findings.push(`* **${title}**: ${snippet}`);
             addSource(`${title} - Wikipedia`, uri);
           }
           if (items.length > 0) {
@@ -156,7 +205,7 @@ export async function searchClientLive(query: string): Promise<ClientSearchResul
           }
         }
       } catch {
-        // ignore error
+        // ignore
       }
     })()
   );
@@ -182,7 +231,7 @@ export async function searchClientLive(query: string): Promise<ClientSearchResul
           }
         }
       } catch {
-        // ignore error
+        // ignore
       }
     })()
   );
@@ -191,22 +240,14 @@ export async function searchClientLive(query: string): Promise<ClientSearchResul
 
   let text = "";
   if (findings.length > 0) {
-    text =
-      `Here is what I found online for **"${query}"**:\n\n` +
-      findings.join("\n\n") +
-      "\n\n" +
-      (sources.length > 0
-        ? "### Verified Sources:\n" + sources.slice(0, 6).map((s) => `* [${s.title}](${s.uri})`).join("\n")
-        : "");
+    text = findings.join("\n\n");
   } else {
-    text = `I searched online for **"${query}"**, but could not find direct matching encyclopedia or live records. Please try asking with more specific keywords.`;
+    text = `I searched online for **"${query}"**, but could not find matching records. Please try asking with more specific keywords.`;
   }
 
   return {
     text,
     sources: sources.slice(0, 6),
     searchQueries: Array.from(new Set(searchQueries)),
-    searchNotice:
-      "Grounded with live web search. Tip: In Vercel, ensure GEMINI_API_KEY is set in Project Settings > Environment Variables for full AI responses.",
   };
 }

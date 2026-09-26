@@ -14,6 +14,8 @@ export interface LiveSearchResult {
   searchQueries: string[];
 }
 
+export const LiveSearchResult = {} as any;
+
 function cleanText(text: string): string {
   return text
     .replace(/<!\[CDATA\[(.*?)\]\]>/g, "$1")

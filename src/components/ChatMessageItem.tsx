@@ -111,26 +111,6 @@ export function ChatMessageItem({ message, onRetry }: ChatMessageItemProps) {
                 </Markdown>
               </div>
 
-              {/* Notice if search grounding information */}
-              {message.searchNotice && (
-                <div
-                  className={`mt-3 flex items-start gap-2 rounded-lg p-2.5 text-xs ${
-                    message.searchNotice.toLowerCase().includes("grounded with real-time")
-                      ? "bg-emerald-50 border border-emerald-200/70 text-emerald-800"
-                      : "bg-amber-50 border border-amber-200/70 text-amber-800"
-                  }`}
-                >
-                  <Info
-                    className={`h-3.5 w-3.5 mt-0.5 shrink-0 ${
-                      message.searchNotice.toLowerCase().includes("grounded with real-time")
-                        ? "text-emerald-600"
-                        : "text-amber-600"
-                    }`}
-                  />
-                  <span className="leading-relaxed">{message.searchNotice}</span>
-                </div>
-              )}
-
               {/* Grounded Sources & Queries */}
               <SourcesList
                 searchQueries={message.searchQueries}
