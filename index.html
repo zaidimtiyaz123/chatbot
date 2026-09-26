@@ -9,10 +9,67 @@
     <meta property="og:description" content="A search assistant that verifies real-time information with web search before answering." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      (function () {
+        try {
+          var originalFetch = window.fetch;
+          var fetchDescriptor =
+            Object.getOwnPropertyDescriptor(window, 'fetch') ||
+            Object.getOwnPropertyDescriptor(Object.getPrototypeOf(window), 'fetch') ||
+            (typeof Window !== 'undefined' && Object.getOwnPropertyDescriptor(Window.prototype, 'fetch'));
+
+          if (!fetchDescriptor || !fetchDescriptor.set) {
+            try {
+              Object.defineProperty(window, 'fetch', {
+                get: function () {
+                  return originalFetch;
+                },
+                set: function (newFetch) {
+                  originalFetch = newFetch;
+                },
+                configurable: true,
+                enumerable: true,
+              });
+            } catch (err) {
+              if (typeof Window !== 'undefined') {
+                try {
+                  Object.defineProperty(Window.prototype, 'fetch', {
+                    get: function () {
+                      return originalFetch;
+                    },
+                    set: function (newFetch) {
+                      originalFetch = newFetch;
+                    },
+                    configurable: true,
+                    enumerable: true,
+                  });
+                } catch (err2) {}
+              }
+            }
+          }
+        } catch (_) {}
+
+        window.addEventListener(
+          'error',
+          function (e) {
+            if (
+              e &&
+              e.message &&
+              (e.message.indexOf('Cannot set property fetch') !== -1 ||
+                e.message.indexOf('which has only a getter') !== -1)
+            ) {
+              e.preventDefault();
+              e.stopImmediatePropagation();
+              return true;
+            }
+          },
+          true
+        );
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

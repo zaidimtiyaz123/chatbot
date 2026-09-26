@@ -5,6 +5,7 @@ import { ChatInput } from "./components/ChatInput";
 import { SuggestedPrompts } from "./components/SuggestedPrompts";
 import { SearchingIndicator } from "./components/SearchingIndicator";
 import { ChatMessage } from "./types";
+import { searchClientLive } from "./services/clientLiveSearch";
 
 function generateId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -53,53 +54,45 @@ export default function App() {
         content: m.content,
       }));
 
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: payloadMessages }),
-      });
+      let botResponseData: any = null;
 
-      const contentType = res.headers.get("content-type") || "";
-      let data: any = null;
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: payloadMessages }),
+        });
 
-      if (contentType.includes("application/json")) {
-        try {
-          data = await res.json();
-        } catch {
-          // JSON parsing fallback
+        const contentType = res.headers.get("content-type") || "";
+
+        if (res.ok && contentType.includes("application/json")) {
+          botResponseData = await res.json();
+        } else {
+          console.warn(`[Search Warning]: API status ${res.status}. Engaging resilient fallback.`);
         }
+      } catch (fetchErr) {
+        console.warn("[Search Warning]: Backend API unreachable. Engaging resilient live search fallback:", fetchErr);
       }
 
-      if (!res.ok) {
-        if (res.status === 502 || res.status === 503 || res.status === 504) {
-          throw new Error("The search service is temporarily warming up or reconnecting. Please click retry in a moment.");
-        }
-        if (res.status === 404) {
-          throw new Error("Search service is temporarily unavailable. Please refresh the page or try again shortly.");
-        }
-        throw new Error(data?.error || `Search service request failed (HTTP ${res.status}). Please try again.`);
-      }
-
-      if (!data) {
-        const text = await res.text().catch(() => "");
-        if (text.includes("<!doctype") || text.includes("<html") || text.toLowerCase().includes("the page")) {
-          throw new Error("The search service is currently reconnecting. Please click retry in a few seconds.");
-        }
-        throw new Error("Received an unexpected response from the search service. Please try again.");
-      }
-
-      if (data.error) {
-        throw new Error(data.error);
+      // If backend did not provide a valid response, use client-side live search fallback
+      if (!botResponseData || !botResponseData.text) {
+        const clientResult = await searchClientLive(userText);
+        botResponseData = {
+          text: clientResult.text,
+          searchQueries: clientResult.searchQueries,
+          sources: clientResult.sources,
+          searchNotice: clientResult.searchNotice,
+        };
       }
 
       const botMessage: ChatMessage = {
         id: generateId(),
         role: "assistant",
-        content: data.text || "No response received.",
+        content: botResponseData.text || "No response received.",
         timestamp: Date.now(),
-        searchQueries: data.searchQueries,
-        sources: data.sources,
-        searchNotice: data.searchNotice,
+        searchQueries: botResponseData.searchQueries,
+        sources: botResponseData.sources,
+        searchNotice: botResponseData.searchNotice,
       };
 
       setMessages((prev) => [...prev, botMessage]);
